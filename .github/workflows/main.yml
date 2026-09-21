@@ -1,4 +1,3 @@
-
 name: Build IDT Android APK
 
 on:
@@ -6,9 +5,6 @@ on:
   push:
     branches:
       - main
-
-permissions:
-  contents: read
 
 jobs:
   build:
@@ -23,39 +19,64 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-          cache: gradle
+          java-version: "17"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
-      - name: Install Android SDK
+      - name: Find Android project
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          echo "Searching for Android project..."
+
+          if [ -f "settings.gradle" ]; then
+            echo "Project found in root folder"
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+
+          elif [ -f "app/settings.gradle" ]; then
+            echo "Project found in app folder"
+            echo "PROJECT_DIR=app" >> "$GITHUB_ENV"
+
+          else
+            PROJECT=$(find . -name "settings.gradle" -type f | head -n 1)
+
+            if [ -z "$PROJECT" ]; then
+              echo "ERROR: settings.gradle not found"
+              exit 1
+            fi
+
+            PROJECT_DIR=$(dirname "$PROJECT")
+            echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          fi
 
       - name: Check Android project
         run: |
-          test -f settings.gradle
-          test -f app/build.gradle
-          echo "Android project found"
-          find app -type f | head -30
+          echo "Project directory: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+          test -f "$PROJECT_DIR/settings.gradle"
 
       - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          gradle --no-daemon \
-            :app:assembleDebug \
-            --stacktrace
+          gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: IDT-debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: IDT-Installation-Signoff-APK
+          path: |
+            **/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 14
