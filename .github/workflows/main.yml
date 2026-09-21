@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build IDT APK
@@ -23,38 +26,34 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
+          accept-android-sdk-licenses: true
 
-      - name: Accept Android licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
-
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Find Android project
+      - name: Locate Android project
+        shell: bash
         run: |
-          echo "Searching for Android project..."
+          set -e
 
-          if [ -f "settings.gradle" ]; then
-            echo "Project found in root folder"
+          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
             echo "PROJECT_DIR=." >> "$GITHUB_ENV"
 
-          elif [ -f "app/settings.gradle" ]; then
-            echo "Project found in app folder"
-            echo "PROJECT_DIR=app" >> "$GITHUB_ENV"
-
           else
-            PROJECT=$(find . -name "settings.gradle" -type f | head -n 1)
+            PROJECT=$(find . -type f \( \
+              -name "settings.gradle" -o \
+              -name "settings.gradle.kts" \
+            \) | head -n 1)
 
             if [ -z "$PROJECT" ]; then
-              echo "ERROR: settings.gradle not found"
+              echo "ERROR: Android project not found"
               exit 1
             fi
 
@@ -62,16 +61,39 @@ jobs:
             echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           fi
 
-      - name: Check Android project
+      - name: Check project files
+        shell: bash
         run: |
+          set -e
+
           echo "Project directory: $PROJECT_DIR"
           ls -la "$PROJECT_DIR"
-          test -f "$PROJECT_DIR/settings.gradle"
+
+          test -f "$PROJECT_DIR/settings.gradle" || \
+          test -f "$PROJECT_DIR/settings.gradle.kts"
+
+          test -d "$PROJECT_DIR/app"
+
+      - name: Check available Gradle tasks
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          gradle tasks --all --no-daemon
 
       - name: Build debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          gradle :app:assembleDebug --no-daemon --stacktrace
+          gradle :app:assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all
+
+      - name: Find APK
+        shell: bash
+        run: |
+          find "$PROJECT_DIR" \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
