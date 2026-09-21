@@ -25,55 +25,82 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: "platform-tools"
-          accept-android-sdk-licenses: true
+        uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        shell: bash
         run: |
-          set -e
-
-          sdkmanager --update || true
-
-          sdkmanager \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p extracted
+
+          ZIP_FILE="IDT_FIXED_WORKING_PROJECT.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Selected ZIP not found: $ZIP_FILE"
+            echo "Available ZIP files:"
+            find . -maxdepth 1 -name "*.zip"
+            exit 1
+          fi
+
+          unzip -q -o "$ZIP_FILE" -d extracted
+
+          echo "Extracted files:"
+          find extracted -maxdepth 4 -type f | head -100
+
       - name: Locate Android project
         shell: bash
         run: |
           set -e
 
-          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          PROJECT_DIR=""
 
-          else
-            PROJECT=$(find . -type f \( \
-              -name "settings.gradle" -o \
-              -name "settings.gradle.kts" \
-            \) | head -n 1)
+          while IFS= read -r SETTINGS; do
+            POSSIBLE_DIR=$(dirname "$SETTINGS")
 
-            if [ -z "$PROJECT" ]; then
-              echo "ERROR: settings.gradle not found"
-              exit 1
+            if [ -d "$POSSIBLE_DIR/app" ]; then
+              PROJECT_DIR="$POSSIBLE_DIR"
+              break
             fi
+          done < <(find extracted -type f \
+            \( -name "settings.gradle" -o \
+               -name "settings.gradle.kts" \))
 
-            echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android project with app folder not found"
+            find extracted -maxdepth 6 -type d
+            exit 1
           fi
 
-      - name: Check project
-        working-directory: ${{ env.PROJECT_DIR }}
+          PROJECT_DIR=$(realpath "$PROJECT_DIR")
+
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Check Android project
+        shell: bash
         run: |
-          pwd
-          ls -la
-          test -d app
+          set -e
+
+          echo "Project directory: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+          ls -la "$PROJECT_DIR/app"
+
+          test -d "$PROJECT_DIR/app"
 
       - name: Show Gradle tasks
         working-directory: ${{ env.PROJECT_DIR }}
@@ -85,12 +112,21 @@ jobs:
         run: |
           gradle :app:assembleDebug \
             --no-daemon \
-            --stacktrace
+            --stacktrace \
+            --warning-mode all
+
+      - name: Find APK
+        shell: bash
+        run: |
+          find "$PROJECT_DIR" \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: IDT-Installation-Signoff-APK
           path: |
-            **/build/outputs/apk/debug/*.apk
+            extracted/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
