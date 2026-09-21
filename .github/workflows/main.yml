@@ -44,11 +44,9 @@ jobs:
             2>/dev/null | head -n 1)
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found"
+            echo "ERROR: Android SDK manager not found"
             exit 1
           fi
-
-          echo "Using sdkmanager: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses \
             >/dev/null 2>&1 || true
@@ -65,27 +63,41 @@ jobs:
 
           mkdir -p extracted
 
-          find . -type f -name "*.zip" \
-            -not -path "./extracted/*" \
-            -print -exec unzip -o {} -d extracted \;
+          for ZIP in $(find . -maxdepth 2 -type f -name "*.zip"); do
+            echo "Extracting: $ZIP"
+            unzip -oq "$ZIP" -d extracted
+          done
 
-      - name: Locate Android project
+      - name: Locate correct Android project
         shell: bash
         run: |
           set -e
 
-          PROJECT_DIR=$(find "$GITHUB_WORKSPACE" \
-            -type f \
-            -name "settings.gradle*" \
-            -not -path "*/.git/*" \
-            -printf "%h\n" | head -n 1)
+          PROJECT_DIR=""
+
+          while IFS= read -r APP_DIR; do
+            POSSIBLE_ROOT=$(dirname "$APP_DIR")
+
+            if [ -f "$POSSIBLE_ROOT/settings.gradle" ] ||
+               [ -f "$POSSIBLE_ROOT/settings.gradle.kts" ]; then
+              PROJECT_DIR="$POSSIBLE_ROOT"
+              break
+            fi
+          done < <(find "$GITHUB_WORKSPACE" \
+            -type d \
+            -path "*/app" \
+            -not -path "*/.git/*")
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: settings.gradle was not found"
+            echo "ERROR: Complete Android project was not found"
+            echo "Folders discovered:"
+            find "$GITHUB_WORKSPACE" -maxdepth 6 -type d
             exit 1
           fi
 
-          echo "Project directory: $PROJECT_DIR"
+          echo "Correct project found:"
+          echo "$PROJECT_DIR"
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Check Android project
@@ -94,21 +106,23 @@ jobs:
         run: |
           set -e
 
-          echo "Project files:"
+          echo "Project contents:"
           ls -la
 
           if [ ! -d "app" ]; then
-            echo "ERROR: app module was not found"
+            echo "ERROR: app folder is missing"
             exit 1
           fi
 
-          if [ ! -f "build.gradle" ] &&
-             [ ! -f "build.gradle.kts" ]; then
-            echo "ERROR: Root Gradle build file was not found"
+          if [ ! -f "settings.gradle" ] &&
+             [ ! -f "settings.gradle.kts" ]; then
+            echo "ERROR: settings.gradle is missing"
             exit 1
           fi
 
-      - name: Show available Gradle tasks
+          echo "Android project check passed"
+
+      - name: Show Gradle tasks
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -120,6 +134,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           gradle :app:assembleDebug \
             --no-daemon \
             --stacktrace
@@ -139,7 +154,9 @@ jobs:
             exit 1
           fi
 
-          echo "APK found: $APK"
+          echo "APK found:"
+          echo "$APK"
+
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
