@@ -25,13 +25,21 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          packages: "platform-tools"
           accept-android-sdk-licenses: true
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+
+          sdkmanager --update || true
+
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -53,28 +61,21 @@ jobs:
             \) | head -n 1)
 
             if [ -z "$PROJECT" ]; then
-              echo "ERROR: Android project not found"
+              echo "ERROR: settings.gradle not found"
               exit 1
             fi
 
-            PROJECT_DIR=$(dirname "$PROJECT")
-            echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+            echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
           fi
 
-      - name: Check project files
-        shell: bash
+      - name: Check project
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          set -e
+          pwd
+          ls -la
+          test -d app
 
-          echo "Project directory: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
-
-          test -f "$PROJECT_DIR/settings.gradle" || \
-          test -f "$PROJECT_DIR/settings.gradle.kts"
-
-          test -d "$PROJECT_DIR/app"
-
-      - name: Check available Gradle tasks
+      - name: Show Gradle tasks
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           gradle tasks --all --no-daemon
@@ -84,16 +85,7 @@ jobs:
         run: |
           gradle :app:assembleDebug \
             --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-      - name: Find APK
-        shell: bash
-        run: |
-          find "$PROJECT_DIR" \
-            -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
-            -print
+            --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
